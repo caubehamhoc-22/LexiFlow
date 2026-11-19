@@ -1,0 +1,26 @@
+{
+  "id": "./",
+  "name": "LexiFlow - Học từ vựng",
+  "short_name": "LexiFlow",
+  "description": "Ôn từ vựng thông minh, offline, học bằng câu hỏi 4 đáp án.",
+  "lang": "vi",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0a1325",
+  "theme_color": "#101c35",
+  "icons": [
+    {
+      "src": "./icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "./icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
