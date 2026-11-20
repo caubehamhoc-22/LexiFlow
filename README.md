@@ -22,7 +22,7 @@ py -m http.server 8080
 Mở `http://localhost:8080/`. **Không mở bằng `file://`** vì IndexedDB/PWA có thể hoạt động không đúng.
 
 ## Đưa lên GitHub Pages miễn phí
-1. Tạo repository GitHub mới (ví dụ `lexiflow`).
+1. Tạo repository GitHub mới (ví dụ `Đăng Khôi`).
 2. Upload **toàn bộ nội dung thư mục** (index.html, app.js, scheduler.js, sw.js, styles.css, manifest.webmanifest, icons/...) vào thư mục gốc repository.
 3. Vào **Settings → Pages → Build and deployment → Deploy from a branch** → `main` → `/ (root)` → Save.
 4. Đợi GitHub Pages cấp URL `https://TEN-TAI-KHOAN.github.io/lexiflow/`. Mở URL bằng Safari (iPhone) hoặc Chrome (Android); chọn **Share → Add to Home Screen** / **Install app**.
