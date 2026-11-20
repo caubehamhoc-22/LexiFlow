@@ -1,5 +1,5 @@
 const CACHE_PREFIX = `lexiflow:${self.registration.scope}:`;
-const CACHE = `${CACHE_PREFIX}3.1`;
+const CACHE = `${CACHE_PREFIX}3.2`;
 const ASSETS = [
   './', './index.html', './styles.css', './app.js', './scheduler.js',
   './ipa-en-us.txt', './manifest.webmanifest', './icons/icon.svg',

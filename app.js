@@ -33,11 +33,14 @@ async function addSample(){const keys=new Set(words.map(w=>w.en.toLocaleLowerCas
 function answerKey(value) {
   return value.normalize('NFC').trim().replace(/\s+/g, ' ').toLowerCase();
 }
-function buildQuestion(word, reverse) {
+function wordKey(word) {
+  return JSON.stringify([answerKey(word.en),answerKey(word.vi),answerKey(word.category)]);
+}
+function buildQuestion(word, reverse, deck = words) {
   const key = reverse ? 'en' : 'vi';
   const prompt = reverse ? 'vi' : 'en';
   const byAnswer = new Map();
-  for (const entry of words) {
+  for (const entry of deck) {
     if (answerKey(entry[prompt]) !== answerKey(word[prompt])) {
       byAnswer.set(answerKey(entry[key]), entry[key]);
     }
@@ -173,14 +176,55 @@ function bindSpeech() {
   });
 }
 
-function studyModeControls() {
+function studyTopic() {
+  return words.some(word => word.category === settings.studyTopic) ? settings.studyTopic : '';
+}
+function studyDeck(topic = studyTopic()) {
+  return topic ? words.filter(word => word.category === topic) : words;
+}
+function studyTopics() {
+  return [...new Set(words.map(word => word.category))].filter(Boolean)
+    .sort((a,b) => a.localeCompare(b,'vi'));
+}
+function randomStudyTopic(now = Date.now()) {
+  const current = studyTopic();
+  const topics = studyTopics().filter(topic => topic !== current);
+  const dueTopics = new Set(words.filter(word => eligible(word, now)).map(word => word.category));
+  const available = topics.filter(topic => dueTopics.has(topic));
+  return randomize(available.length ? available : topics)[0] || current;
+}
+function studyModeControls(topic) {
+  const topics = studyTopics();
   return `<div class="study-modes" aria-label="Cách luyện tập">
+    <label class="study-topic">
+      <span>Chủ đề học</span>
+      <select id="study-topic" class="select" ${quiz?.saving?'disabled':''}>
+        <option value="">Ngẫu nhiên · tất cả chủ đề</option>
+        ${topics.map(name => `<option value="${escapeHTML(name)}" ${name===topic?'selected':''}>${escapeHTML(name)}</option>`).join('')}
+      </select>
+    </label>
+    ${topics.length>1?`<button class="btn small secondary" id="random-topic" ${quiz?.saving?'disabled':''}>Bốc một chủ đề</button>`:''}
     <button class="btn small secondary" data-mode="recall" aria-pressed="${studyMode==='recall'}">Tự nhớ</button>
     <button class="btn small secondary" data-mode="choice" aria-pressed="${studyMode==='choice'}">Trắc nghiệm</button>
   </div>`;
 }
+async function changeStudyTopic(topic) {
+  if (quiz?.saving) return;
+  settings.studyTopic = topic;
+  nextQuestion();
+  render();
+  try {
+    await put('settings', {key:'studyTopic',value:topic});
+  } catch {
+    toast('Chưa lưu được chủ đề cho lần mở tiếp theo.');
+  }
+}
 function bindStudyModes() {
+  $('#study-topic').onchange = event => changeStudyTopic(event.target.value);
+  const randomTopic = $('#random-topic');
+  if (randomTopic) randomTopic.onclick = () => changeStudyTopic(randomStudyTopic());
   content.querySelectorAll('[data-mode]').forEach(button => button.onclick = () => {
+    if (quiz?.saving) return;
     const practice = quiz?.practice;
     studyMode = button.dataset.mode;
     nextQuestion(practice);
@@ -197,24 +241,26 @@ function reviewHint(word, grade) {
 let nextReviewTimer;
 function study() {
   clearTimeout(nextReviewTimer);
-  if (!quiz || !words.some(word => word.id === quiz.word.id)) nextQuestion();
+  const topic = studyTopic();
+  const deck = studyDeck(topic);
+  if (!quiz || !deck.some(word => word.id === quiz.word.id)) nextQuestion();
   const q = quiz;
-  const due = stats().due;
+  const now = Date.now();
+  const due = deck.filter(word => eligible(word, now)).length;
   if (!q) {
-    const lacksChoices = studyMode === 'choice' && (distinctCount('en') < 4 || distinctCount('vi') < 4);
-    content.innerHTML = studyModeControls() + `<div class="panel empty">
-      <h2>${!words.length?'Bắt đầu bằng một từ':lacksChoices?'Cần bốn từ và nghĩa khác nhau':due?'Chưa đủ đáp án cho các từ đến hạn':'Đã hoàn thành lượt ôn'}</h2>
-      <p>${!words.length?'Thêm từ của bạn hoặc thử với bộ từ mẫu.':lacksChoices||due?'Bạn có thể chuyển sang Tự nhớ để ôn các từ này.':'Ứng dụng sẽ đưa từ trở lại khi đến hạn. Luyện thêm sẽ giữ nguyên lịch ôn.'}</p>
-      <div class="split" style="justify-content:center">${!words.length||lacksChoices
+    const lacksChoices = studyMode === 'choice' && (distinctCount(deck, 'en') < 4 || distinctCount(deck, 'vi') < 4);
+    content.innerHTML = studyModeControls(topic) + `<div class="panel empty">
+      <h2>${!words.length?'Bắt đầu bằng một từ':lacksChoices?'Chủ đề cần ít nhất 4 từ và nghĩa khác nhau':due?'Chưa đủ đáp án cho các từ đến hạn':'Đã hoàn thành lượt ôn'}</h2>
+      <p>${!words.length?'Thêm từ của bạn hoặc thử với bộ từ mẫu.':lacksChoices||due?'Chọn Tự nhớ để ôn bằng các từ trong phạm vi hiện tại.':'Ứng dụng sẽ đưa từ trở lại khi đến hạn. Luyện thêm sẽ giữ nguyên lịch ôn.'}</p>
+      <div class="split" style="justify-content:center">${!words.length
         ? '<button class="btn" id="sample-study">Thêm bộ từ mẫu</button><button class="btn secondary" id="add-study">Thêm từ của tôi</button>'
-        : due ? '' : '<button class="btn" id="free-practice">Luyện tập thêm</button><button class="btn secondary" id="go-stats">Xem thống kê</button>'}</div></div>`;
+        : lacksChoices || due ? '' : '<button class="btn" id="free-practice">Luyện tập thêm</button><button class="btn secondary" id="go-stats">Xem thống kê</button>'}</div></div>`;
     bindStudyModes();
     if ($('#sample-study')) $('#sample-study').onclick = addSample;
     if ($('#add-study')) $('#add-study').onclick = () => wordModal();
     if ($('#free-practice')) $('#free-practice').onclick = () => {nextQuestion(true); render()};
     if ($('#go-stats')) $('#go-stats').onclick = () => setPage('stats');
-    const now = Date.now();
-    const nextDue = words.reduce((soonest, word) =>
+    const nextDue = deck.reduce((soonest, word) =>
       word.reviews && word.due > now ? Math.min(soonest, word.due) : soonest, Infinity);
     if (Number.isFinite(nextDue)) {
       nextReviewTimer = setTimeout(() => {
@@ -226,8 +272,8 @@ function study() {
 
   const recall = studyMode === 'recall';
   const wrongChoice = !recall && q.done && q.selected !== q.correct;
-  content.innerHTML = `<div class="quiz-shell">${studyModeControls()}<div class="quiz-head">
-    <span class="pill">${q.reverse?'VI → EN':'EN → VI'}</span>
+  content.innerHTML = `<div class="quiz-shell">${studyModeControls(topic)}<div class="quiz-head">
+    <span class="pill">${q.reverse?'VI → EN':'EN → VI'} · ${escapeHTML(q.word.category)}</span>
     <span class="muted small-text">${q.practice?'Luyện thêm':`${due} từ đến hạn`}</span></div>
     <div class="quiz-card">
       <div class="eyebrow">${q.reverse?'TIẾNG ANH LÀ GÌ?':'NGHĨA TIẾNG VIỆT LÀ GÌ?'}</div>
@@ -283,15 +329,18 @@ async function saveReview(q, grade, recall, wrongChoice) {
     if (page === 'study') render();
   }
 }
-function distinctCount(field) {
-  return new Set(words.map(word => answerKey(word[field]))).size;
+function distinctCount(deck, field) {
+  return new Set(deck.map(word => answerKey(word[field]))).size;
 }
 function nextQuestion(practice = false, previousId) {
   const now = Date.now();
-  const pool = words.filter(word => practice ? word.reviews > 0 : eligible(word, now));
-  const candidates = practice ? randomize(pool) : pool.sort((a, b) =>
+  const topic = studyTopic();
+  const deck = studyDeck(topic);
+  const pool = deck.filter(word => practice ? word.reviews > 0 : eligible(word, now));
+  const candidates = practice || !topic ? randomize(pool) : pool;
+  if (!practice) candidates.sort((a, b) =>
     Number(Boolean(b.reviews)) - Number(Boolean(a.reviews)) ||
-    (a.due || 0) - (b.due || 0) || (a.createdAt || 0) - (b.createdAt || 0));
+    (topic ? (a.due || 0) - (b.due || 0) || (a.createdAt || 0) - (b.createdAt || 0) : 0));
   const previousIndex = candidates.findIndex(word => word.id === previousId);
   if (previousIndex !== -1) candidates.push(...candidates.splice(previousIndex, 1));
   quiz = null;
@@ -303,32 +352,148 @@ function nextQuestion(practice = false, previousId) {
     if (studyMode === 'recall') {
       quiz = {word, reverse, done:false, practice};
     } else {
-      quiz = buildQuestion(word, reverse);
-      if (!quiz && settings.direction === 'mixed') quiz = buildQuestion(word, !reverse);
+      quiz = buildQuestion(word, reverse, deck);
+      if (!quiz && settings.direction === 'mixed') quiz = buildQuestion(word, !reverse, deck);
       if (quiz) quiz.practice = practice;
     }
     if (quiz) break;
   }
 }
 function wordPage(){const cats=[...new Set(words.map(w=>w.category))].sort();let filtered=words.filter(w=>(w.en+' '+w.vi+' '+w.category).toLowerCase().includes(filter.toLowerCase())&&(categoryFilter==='all'||w.category===categoryFilter)).sort((a,b)=>a.en.localeCompare(b.en));content.innerHTML=`<div class="toolbar"><input class="input" id="search-words" placeholder="🔎 Tìm từ hoặc nghĩa..." value="${escapeHTML(filter)}"><select class="select" id="cat-filter"><option value="all">Tất cả chủ đề</option>${cats.map(c=>`<option value="${escapeHTML(c)}" ${categoryFilter===c?'selected':''}>${escapeHTML(c)}</option>`).join('')}</select><button class="btn" id="open-add">+ Thêm từ</button><button class="btn secondary" id="open-bulk">⇧ Nhập hàng loạt</button></div><div class="space-between" style="margin-bottom:16px"><span class="muted small-text">${filtered.length} / ${words.length} từ</span><span class="muted small-text">Dữ liệu lưu trên thiết bị này</span></div><div class="word-list">${filtered.length?filtered.map(w=>`<div class="word-item"><div style="min-width:0"><strong>${escapeHTML(w.en)}</strong> <span class="pill">${escapeHTML(w.category)}</span><p>${escapeHTML(w.vi)} · ${w.reviews?`Đã ôn ${w.reviews} lần`:'Chưa học'}</p>${speakerButtons(w)}</div><div class="actions"><button data-edit="${escapeHTML(w.id)}" title="Chỉnh sửa">✎</button><button data-delete="${escapeHTML(w.id)}" title="Xóa">✕</button></div></div>`).join(''):'<div class="panel empty">Chưa có từ vựng phù hợp. Hãy thêm từ mới.</div>'}</div>`;$('#search-words').oninput=e=>{filter=e.target.value;wordPage();const input=$('#search-words');input.focus();input.setSelectionRange(filter.length,filter.length)};$('#cat-filter').onchange=e=>{categoryFilter=e.target.value;wordPage()};$('#open-add').onclick=()=>wordModal();$('#open-bulk').onclick=bulkModal;document.querySelectorAll('[data-edit]').forEach(b=>b.onclick=()=>wordModal(words.find(w=>w.id===b.dataset.edit)));document.querySelectorAll('[data-delete]').forEach(b=>b.onclick=()=>deleteWord(b.dataset.delete))}
-function modal(html){const el=$('#modal');el.innerHTML=`<div class="modal" role="dialog" aria-modal="true">${html}</div>`;el.hidden=false;el.onclick=e=>{if(e.target===el)closeModal()};document.querySelectorAll('[data-close]').forEach(b=>b.onclick=closeModal)}function closeModal(){$('#modal').hidden=true;$('#modal').innerHTML=''}function wordModal(w=null){modal(`<div class="space-between"><h2>${w?'Chỉnh sửa':'Thêm'} từ vựng</h2><button class="icon-button" data-close>✕</button></div><form id="word-form"><div class="field"><label for="en">Từ tiếng Anh</label><input id="en" class="input" maxlength="120" required value="${escapeHTML(w?.en||'')}" placeholder="e.g. accomplish"></div><div class="field"><label for="vi">Nghĩa tiếng Việt</label><input id="vi" class="input" maxlength="220" required value="${escapeHTML(w?.vi||'')}" placeholder="e.g. hoàn thành"></div><div class="field"><label for="ipa">IPA (tùy chọn)</label><input id="ipa" class="input" maxlength="160" value="${escapeHTML(w?.ipa||'')}" placeholder="/əˈkɑmplɪʃ/"></div><div class="field"><label for="category">Chủ đề</label><input id="category" class="input" maxlength="70" value="${escapeHTML(w?.category||'Chung')}"></div><button class="btn full" type="submit">${w?'Lưu thay đổi':'Thêm từ vựng'}</button></form>`);$('#word-form').onsubmit=async e=>{e.preventDefault();let en=$('#en').value.trim(),vi=$('#vi').value.trim(),category=$('#category').value.trim()||'Chung';let ipa=$('#ipa').value.trim();if(!en||!vi)return;if(words.some(x=>x.id!==w?.id&&x.en.toLowerCase()===en.toLowerCase())){toast('Từ tiếng Anh này đã tồn tại');return}const changed=w&&(w.en!==en||w.vi!==vi);await put('words',w?{...w,en,vi,category,ipa,...(changed?{reviews:0,successes:0,lapses:0,stability:0,difficulty:5,due:0,lastReviewed:0,lastGrade:0,lastDirection:null,spacedSuccesses:0,learnAgain:false}:{})}:{...wordObject(en,vi,category),ipa});lastPronunciation=undefined;quiz=null;await refresh();closeModal();render();toast(w?'Đã cập nhật từ':'Đã thêm từ vựng')}}
+function modal(html){const el=$('#modal');el.innerHTML=`<div class="modal" role="dialog" aria-modal="true">${html}</div>`;el.hidden=false;el.onclick=e=>{if(e.target===el)closeModal()};document.querySelectorAll('[data-close]').forEach(b=>b.onclick=closeModal)}function closeModal(){$('#modal').hidden=true;$('#modal').innerHTML=''}function wordModal(w=null){modal(`<div class="space-between"><h2>${w?'Chỉnh sửa':'Thêm'} từ vựng</h2><button class="icon-button" data-close>✕</button></div><form id="word-form"><div class="field"><label for="en">Từ tiếng Anh</label><input id="en" class="input" maxlength="120" required value="${escapeHTML(w?.en||'')}" placeholder="e.g. accomplish"></div><div class="field"><label for="vi">Nghĩa tiếng Việt</label><input id="vi" class="input" maxlength="220" required value="${escapeHTML(w?.vi||'')}" placeholder="e.g. hoàn thành"></div><div class="field"><label for="ipa">IPA (tùy chọn)</label><input id="ipa" class="input" maxlength="160" value="${escapeHTML(w?.ipa||'')}" placeholder="/əˈkɑmplɪʃ/"></div><div class="field"><label for="category">Chủ đề</label><input id="category" class="input" maxlength="70" value="${escapeHTML(w?.category||'Chung')}"></div><button class="btn full" type="submit">${w?'Lưu thay đổi':'Thêm từ vựng'}</button></form>`);$('#word-form').onsubmit=async e=>{e.preventDefault();let en=$('#en').value.trim(),vi=$('#vi').value.trim(),category=$('#category').value.trim()||'Chung';let ipa=$('#ipa').value.trim();if(!en||!vi)return;if(words.some(x=>x.id!==w?.id&&wordKey(x)===wordKey({en,vi,category}))){toast('Từ và nghĩa này đã có trong chủ đề');return}const changed=w&&(w.en!==en||w.vi!==vi);await put('words',w?{...w,en,vi,category,ipa,...(changed?{reviews:0,successes:0,lapses:0,stability:0,difficulty:5,due:0,lastReviewed:0,lastGrade:0,lastDirection:null,spacedSuccesses:0,learnAgain:false}:{})}:{...wordObject(en,vi,category),ipa});lastPronunciation=undefined;quiz=null;await refresh();closeModal();render();toast(w?'Đã cập nhật từ':'Đã thêm từ vựng')}}
 async function deleteWord(id){const w=words.find(w=>w.id===id);if(!w||!confirm(`Xóa từ “${w.en}”?`))return;await remove('words',id);quiz=null;await refresh();render();toast('Đã xóa từ')}
 function parseBulk(text,category){const rows=[],errors=[];for(const [i,line] of text.split(/\r?\n/).entries()){if(!line.trim())continue;const parts=line.split(/\t|\s*[;|]\s*|\s+[-–—]\s+/);if(parts.length<2||!parts[0].trim()||!parts.slice(1).join(' ').trim()){errors.push(i+1);continue}rows.push(wordObject(parts[0],parts.slice(1).join(' - '),category))}return {rows,errors}}
-function bulkModal(){modal(`<div class="space-between"><h2>Nhập từ vựng hàng loạt</h2><button class="icon-button" data-close>✕</button></div><p class="muted small-text">Mỗi dòng một từ, dùng dấu <b>;</b>, dấu <b>|</b>, tab hoặc <b> - </b> giữa từ và nghĩa.</p><form id="bulk-form"><div class="field"><label for="bulk-cat">Chủ đề</label><input id="bulk-cat" class="input" placeholder="Ví dụ: IELTS" value="Chung"></div><div class="field"><label for="bulk-text">Danh sách từ vựng</label><textarea id="bulk-text" class="textarea" required placeholder="maintain; duy trì&#10;achieve; đạt được&#10;improve; cải thiện&#10;benefit; lợi ích"></textarea></div><button class="btn full" type="submit">Nhập danh sách</button></form>`);$('#bulk-form').onsubmit=async e=>{e.preventDefault();const {rows,errors}=parseBulk($('#bulk-text').value,$('#bulk-cat').value.trim()||'Chung');const present=new Set(words.map(w=>w.en.toLowerCase()));let added=0,duplicate=0;for(const w of rows){const key=w.en.toLowerCase();if(present.has(key)){duplicate++;continue}await put('words',w);present.add(key);added++}quiz=null;await refresh();closeModal();render();toast(`Đã nhập ${added} từ; trùng ${duplicate}; sai định dạng ${errors.length}`)}}
+function bulkModal(){modal(`<div class="space-between"><h2>Nhập từ vựng hàng loạt</h2><button class="icon-button" data-close>✕</button></div><p class="muted small-text">Mỗi dòng một từ, dùng dấu <b>;</b>, dấu <b>|</b>, tab hoặc <b> - </b> giữa từ và nghĩa.</p><form id="bulk-form"><div class="field"><label for="bulk-cat">Chủ đề</label><input id="bulk-cat" class="input" placeholder="Ví dụ: IELTS" value="Chung"></div><div class="field"><label for="bulk-text">Danh sách từ vựng</label><textarea id="bulk-text" class="textarea" required placeholder="maintain; duy trì&#10;achieve; đạt được&#10;improve; cải thiện&#10;benefit; lợi ích"></textarea></div><button class="btn full" type="submit">Nhập danh sách</button></form>`);$('#bulk-form').onsubmit=async e=>{e.preventDefault();const {rows,errors}=parseBulk($('#bulk-text').value,$('#bulk-cat').value.trim()||'Chung');const present=new Set(words.map(wordKey));let added=0,duplicate=0;for(const w of rows){const key=wordKey(w);if(present.has(key)){duplicate++;continue}await put('words',w);present.add(key);added++}quiz=null;await refresh();closeModal();render();toast(`Đã nhập ${added} từ; trùng ${duplicate}; sai định dạng ${errors.length}`)}}
 function chartSVG(points){const w=650,h=220,pad=30,ys=points.map(p=>p.value),max=100;const coords=points.map((p,i)=>[pad+i*(w-2*pad)/Math.max(1,points.length-1),h-pad-p.value/max*(h-2*pad)]);return `<svg class="chart" viewBox="0 0 ${w} ${h}" role="img" aria-label="Biểu đồ tỷ lệ trả lời đúng 7 ngày"><line x1="${pad}" y1="${h-pad}" x2="${w-pad}" y2="${h-pad}" class="chart-grid"/><line x1="${pad}" y1="${pad}" x2="${w-pad}" y2="${pad}" class="chart-grid"/><line x1="${pad}" y1="${(h)/2}" x2="${w-pad}" y2="${h/2}" class="chart-grid"/><text x="0" y="${pad+4}" class="chart-label">100%</text><text x="0" y="${h-pad+4}" class="chart-label">0%</text>${coords.length>1?`<polyline class="chart-line" points="${coords.map(p=>p.join(',')).join(' ')}"/>`:''}${coords.map(([x,y],i)=>`<circle cx="${x}" cy="${y}" r="4" class="chart-dot"/><text x="${x}" y="${h-7}" text-anchor="middle" class="chart-label">${points[i].label}</text>`).join('')}</svg>`}
 function statsPage(){const s=stats(),counts={strong:0,medium:0,weak:0,new:0};words.forEach(w=>counts[quality(w)]++);const points=Array.from({length:7},(_,i)=>{const day=dayOffset(i-6),ls=logs.filter(l=>l.mode!=='recall'&&localDate(l.time)===day);return {label:new Date(fromDay(day)).toLocaleDateString('vi-VN',{weekday:'short'}),value:ls.length?Math.round(ls.filter(l=>l.correct).length/ls.length*100):0,n:ls.length}});const upcoming=Array.from({length:7},(_,i)=>{const day=dayOffset(i),n=words.filter(w=>w.reviews&&localDate(w.due)===day).length;return {day,n}});content.innerHTML=`<div class="grid"><div class="panel"><div class="stat-caption">TỪ ĐÃ HỌC</div><div class="stat-value">${s.reviewed}</div><div class="stat-foot">trên ${words.length} từ</div></div><div class="panel"><div class="stat-caption">TRẮC NGHIỆM ĐÚNG</div><div class="stat-value">${pct(s.accuracy)}</div><div class="stat-foot">${s.answered} câu trắc nghiệm</div></div><div class="panel"><div class="stat-caption">KHẢ NĂNG NHỚ DỰ ĐOÁN</div><div class="stat-value">${pct(s.ret)}</div><div class="stat-foot">ước tính từ mô hình DSR</div></div></div><div class="grid two" style="margin-top:18px"><div class="panel"><h3>📈 Tỷ lệ trả lời đúng · 7 ngày</h3><p class="chart-caption">Ngày không luyện tập được hiển thị ở mức 0%, không tính vào tỷ lệ tổng.</p>${chartSVG(points)}</div><div class="panel"><h3>🧠 Phân loại mức độ ghi nhớ</h3><p class="muted small-text">${s.recallCount ? `Tự nhớ đúng ${pct(s.recallRate)} qua ${s.recallCount} lượt.` : 'Kết quả Tự nhớ sẽ hiện sau lượt đầu tiên.'}</p><div class="bar-list" style="margin-top:25px">${[['strong','Ghi nhớ tốt','#54d6ad'],['medium','Đang củng cố','#83a3ff'],['weak','Dễ quên','#fa9f70'],['new','Chưa học','#7686a3']].map(([k,t,c])=>`<div class="bar-row"><div><span>${t}</span><strong>${counts[k]}</strong></div><div class="bar-fill"><span style="width:${words.length?100*counts[k]/words.length:0}%;background:${c}"></span></div></div>`).join('')}</div></div></div><div class="section-head"><h2>📅 Lịch ôn 7 ngày tới</h2></div><div class="panel"><div class="schedule-list">${upcoming.map(x=>`<div class="schedule-item"><span class="muted small-text">${formatDate(fromDay(x.day))}</span><strong>${x.n} từ</strong></div>`).join('')}</div><p class="footer-note">Từ quá hạn được tính trong số “Cần ôn hôm nay” ở trang tổng quan.</p></div><p class="footer-note">Chỉ số “khả năng nhớ” là xác suất ước tính theo mô hình, không phải kết quả kiểm tra trí nhớ lâm sàng. Mô hình cần nhiều lượt ôn để phản ánh tốt hơn khả năng ghi nhớ.</p>`}
-function settingsPage(){content.innerHTML=`<div class="grid two"><div class="panel"><h3>⚙ Tùy chọn học tập</h3><div class="field"><label for="direction">Chiều câu hỏi</label><select class="select" id="direction"><option value="mixed" ${settings.direction==='mixed'?'selected':''}>Kết hợp hai chiều</option><option value="en-vi" ${settings.direction==='en-vi'?'selected':''}>Anh → Việt</option><option value="vi-en" ${settings.direction==='vi-en'?'selected':''}>Việt → Anh</option></select></div><div class="field"><label for="daily-goal">Mục tiêu từ mỗi ngày</label><input type="number" id="daily-goal" min="1" max="500" class="input" value="${settings.dailyGoal}"></div><button class="btn" id="save-settings">Lưu tùy chọn</button></div><div class="panel"><h3>🛡 Sao lưu và khôi phục</h3><p class="muted small-text">Dữ liệu chỉ lưu trên thiết bị hiện tại. Hãy xuất bản sao lưu định kỳ để tránh mất dữ liệu nếu xóa trình duyệt hoặc đổi máy.</p><div class="split"><button class="btn secondary" id="export-data">⬇ Xuất JSON</button><button class="btn secondary" id="import-data">⬆ Nhập JSON</button><input id="file-input" type="file" accept="application/json,.json" hidden></div></div><div class="panel"><h3>📱 Cài trên điện thoại</h3><p class="muted small-text">iPhone: mở bằng Safari → Chia sẻ → Thêm vào Màn hình chính. Android: Chrome → Cài đặt ứng dụng / Thêm vào màn hình chính. Cần HTTPS để cài đặt và chạy offline qua Service Worker.</p><p class="footer-note">Khi cập nhật mã nguồn cùng địa chỉ web, dữ liệu IndexedDB được giữ lại nếu không xóa dữ liệu trang web.</p></div><div class="panel"><h3>ℹ Thuật toán</h3><p class="muted small-text">ĐK.Language ưu tiên từ đến hạn. Chế độ Tự nhớ để bạn nghĩ đáp án trước khi lật thẻ. Mức Quên đưa từ trở lại sau 2 phút, còn mức Khó với từ đang học lại lên lịch sau 10 phút.</p><p class="footer-note">Chọn tốc độ 0,5×–1,5×. Bấm Nghe để hiện IPA Anh–Mỹ. Để nghe offline, thiết bị cần có giọng English (United States) dùng được ngoại tuyến.</p><button class="btn danger small" id="reset-data">Xóa toàn bộ dữ liệu</button></div></div>`;$('#save-settings').onclick=async()=>{const g=Number($('#daily-goal').value);if(!Number.isInteger(g)||g<1||g>500){toast('Mục tiêu phải từ 1 đến 500');return}const direction=$('#direction').value;await write('settings',tx=>{const store=tx.objectStore('settings');store.put({key:'dailyGoal',value:g});store.put({key:'direction',value:direction})});settings={...settings,dailyGoal:g,direction};quiz=null;toast('Đã lưu thiết lập')};$('#export-data').onclick=exportData;$('#import-data').onclick=()=>$('#file-input').click();$('#file-input').onchange=importData;$('#reset-data').onclick=async()=>{if(!confirm('Bạn chắc chắn muốn XÓA tất cả từ vựng và lịch sử? Hành động không thể hoàn tác.'))return;if(!confirm('Xác nhận lần cuối: xóa dữ liệu vĩnh viễn?'))return;await replaceData([], [], Object.entries(settings).map(([key,value])=>({key,value})));quiz=null;await refresh();render();toast('Đã xóa toàn bộ dữ liệu')}}
+function settingsPage(){content.innerHTML=`<div class="grid two"><div class="panel"><h3>⚙ Tùy chọn học tập</h3><div class="field"><label for="direction">Chiều câu hỏi</label><select class="select" id="direction"><option value="mixed" ${settings.direction==='mixed'?'selected':''}>Kết hợp hai chiều</option><option value="en-vi" ${settings.direction==='en-vi'?'selected':''}>Anh → Việt</option><option value="vi-en" ${settings.direction==='vi-en'?'selected':''}>Việt → Anh</option></select></div><div class="field"><label for="daily-goal">Mục tiêu từ mỗi ngày</label><input type="number" id="daily-goal" min="1" max="500" class="input" value="${settings.dailyGoal}"></div><button class="btn" id="save-settings">Lưu tùy chọn</button></div><div class="panel"><h3>🛡 Sao lưu và khôi phục</h3><p class="muted small-text">Dữ liệu chỉ lưu trên thiết bị hiện tại. Hãy xuất bản sao lưu định kỳ để tránh mất dữ liệu nếu xóa trình duyệt hoặc đổi máy. Gộp JSON thêm từ và lịch sử từ tệp vào kho hiện tại.</p><div class="split"><button class="btn secondary" id="export-data">⬇ Xuất JSON</button><button class="btn secondary" id="import-data">⬆ Gộp JSON</button><button class="btn ghost small" id="restore-data">Khôi phục thay thế</button><input id="file-input" type="file" accept="application/json,.json" hidden></div></div><div class="panel"><h3>📱 Cài trên điện thoại</h3><p class="muted small-text">iPhone: mở bằng Safari → Chia sẻ → Thêm vào Màn hình chính. Android: Chrome → Cài đặt ứng dụng / Thêm vào màn hình chính. Cần HTTPS để cài đặt và chạy offline qua Service Worker.</p><p class="footer-note">Khi cập nhật mã nguồn cùng địa chỉ web, dữ liệu IndexedDB được giữ lại nếu không xóa dữ liệu trang web.</p></div><div class="panel"><h3>ℹ Thuật toán</h3><p class="muted small-text">ĐK.Language ưu tiên từ đến hạn. Chế độ Tự nhớ để bạn nghĩ đáp án trước khi lật thẻ. Mức Quên đưa từ trở lại sau 2 phút, còn mức Khó với từ đang học lại lên lịch sau 10 phút.</p><p class="footer-note">Chọn tốc độ 0,5×–1,5×. Bấm Nghe để hiện IPA Anh–Mỹ. Để nghe offline, thiết bị cần có giọng English (United States) dùng được ngoại tuyến.</p><button class="btn danger small" id="reset-data">Xóa toàn bộ dữ liệu</button></div></div>`;$('#save-settings').onclick=async()=>{const g=Number($('#daily-goal').value);if(!Number.isInteger(g)||g<1||g>500){toast('Mục tiêu phải từ 1 đến 500');return}const direction=$('#direction').value;await write('settings',tx=>{const store=tx.objectStore('settings');store.put({key:'dailyGoal',value:g});store.put({key:'direction',value:direction})});settings={...settings,dailyGoal:g,direction};quiz=null;toast('Đã lưu thiết lập')};$('#export-data').onclick=exportData;const fileInput=$('#file-input');$('#import-data').onclick=()=>{fileInput.dataset.replace='false';fileInput.click()};$('#restore-data').onclick=()=>{fileInput.dataset.replace='true';fileInput.click()};fileInput.onchange=importData;$('#reset-data').onclick=async()=>{if(!confirm('Bạn chắc chắn muốn XÓA tất cả từ vựng và lịch sử? Hành động không thể hoàn tác.'))return;if(!confirm('Xác nhận lần cuối: xóa dữ liệu vĩnh viễn?'))return;await replaceData([], [], Object.entries(settings).map(([key,value])=>({key,value})));quiz=null;await refresh();render();toast('Đã xóa toàn bộ dữ liệu')}}
 function exportData(){const data={format:'lexiflow-backup',version:1,exportedAt:new Date().toISOString(),words,logs,settings};const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=`dk-language-backup-${localDate()}.json`;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1500);toast('Đã xuất file sao lưu')}
-async function importData(e){const file=e.target.files?.[0];if(!file)return;try{if(file.size>15*1024*1024)throw Error('File quá lớn (tối đa 15MB)');const obj=JSON.parse(await file.text());if(obj.format!=='lexiflow-backup'||obj.version!==1||!Array.isArray(obj.words)||!Array.isArray(obj.logs))throw Error('Không đúng định dạng bản sao lưu ĐK.Language');if(obj.words.length>100000||obj.logs.length>1000000)throw Error('Dữ liệu vượt giới hạn');if(!obj.words.every(w=>typeof w.id==='string'&&typeof w.en==='string'&&typeof w.vi==='string'&&w.en&&w.vi&&typeof w.category==='string'&&Number.isFinite(w.reviews)&&Number.isFinite(w.due))||!obj.logs.every(l=>typeof l.id==='string'&&typeof l.wordId==='string'&&Number.isFinite(l.time)&&typeof l.correct==='boolean'))throw Error('Cấu trúc dữ liệu không hợp lệ');if(!confirm(`Khôi phục ${obj.words.length} từ và ${obj.logs.length} lượt học? Dữ liệu hiện tại sẽ bị thay thế. Hãy xuất sao lưu trước nếu cần.`))return;const restoredSettings = [];
+function mergeBackup(currentWords, currentLogs, backup) {
+  const keys = new Map(currentWords.map(word => [wordKey(word),word]));
+  const wordIds = new Set(currentWords.map(word => word.id));
+  const remappedIds = new Map();
+  const changedWords = new Map();
+  let addedWords = 0;
+
+  for (const incoming of backup.words) {
+    const key = wordKey(incoming);
+    const existing = keys.get(key);
+    if (!existing) {
+      const id = wordIds.has(incoming.id) ? uuid() : incoming.id;
+      const word = {...incoming,id};
+      wordIds.add(id);
+      keys.set(key,word);
+      remappedIds.set(incoming.id,id);
+      changedWords.set(id,word);
+      addedWords++;
+      continue;
+    }
+    remappedIds.set(incoming.id,existing.id);
+    const useIncoming = (incoming.lastReviewed || 0) > (existing.lastReviewed || 0);
+    const ipa = existing.ipa || incoming.ipa;
+    if (useIncoming || ipa !== existing.ipa) {
+      const word = {...existing,...(useIncoming?incoming:{}),
+        id:existing.id,en:existing.en,vi:existing.vi,category:existing.category,ipa};
+      keys.set(key,word);
+      changedWords.set(word.id,word);
+    }
+  }
+
+  const logIds = new Set(currentLogs.map(log => log.id));
+  const logKey = log => JSON.stringify([log.wordId,log.time,log.correct,log.grade,log.direction,
+    log.mode === 'recall'?'recall':'choice',Boolean(log.practice)]);
+  const events = new Set(currentLogs.map(logKey));
+  const addedLogs = [];
+  for (const log of backup.logs) {
+    const wordId = remappedIds.get(log.wordId);
+    if (!wordId) continue;
+    const entry = {...log,wordId};
+    const key = logKey(entry);
+    if (events.has(key)) continue;
+    if (logIds.has(entry.id)) entry.id = uuid();
+    logIds.add(entry.id);
+    events.add(key);
+    addedLogs.push(entry);
+  }
+  return {changedWords, addedLogs, addedWords};
+}
+
+async function mergeData(backup) {
+  let result;
+  await write(['words','logs'], tx => {
+    const wordStore = tx.objectStore('words');
+    const logStore = tx.objectStore('logs');
+    const existingWords = wordStore.getAll();
+    const existingLogs = logStore.getAll();
+    existingLogs.onsuccess = () => {
+      result = mergeBackup(existingWords.result, existingLogs.result, backup);
+      for (const word of result.changedWords.values()) wordStore.put(word);
+      for (const log of result.addedLogs) logStore.add(log);
+    };
+  });
+  return result;
+}
+function backupSettings(obj) {
+  const restored = [];
   if (['mixed','en-vi','vi-en'].includes(obj.settings?.direction)) {
-    restoredSettings.push({key:'direction', value:obj.settings.direction});
+    restored.push({key:'direction',value:obj.settings.direction});
   }
   if (Number.isInteger(obj.settings?.dailyGoal) && obj.settings.dailyGoal >= 1 && obj.settings.dailyGoal <= 500) {
-    restoredSettings.push({key:'dailyGoal', value:obj.settings.dailyGoal});
+    restored.push({key:'dailyGoal',value:obj.settings.dailyGoal});
+  }
+  if (typeof obj.settings?.studyTopic === 'string' && obj.words.some(word => word.category === obj.settings.studyTopic)) {
+    restored.push({key:'studyTopic',value:obj.settings.studyTopic});
   }
   if (speechRates.includes(String(obj.settings?.speechRate))) {
-    restoredSettings.push({key:'speechRate', value:Number(obj.settings.speechRate)});
+    restored.push({key:'speechRate',value:Number(obj.settings.speechRate)});
   }
-  lastPronunciation=undefined;
-  await replaceData(obj.words, obj.logs, restoredSettings);quiz=null;await refresh();render();toast(`Đã khôi phục ${words.length} từ`)}catch(err){toast('Không thể nhập: '+err.message)}finally{e.target.value=''}}
+  return restored;
+}
+
+async function importData(e) {
+  const input = e.target;
+  const file = input.files?.[0];
+  if (!file) return;
+  const replace = input.dataset.replace === 'true';
+  input.disabled = true;
+  try {
+    if (file.size > 15*1024*1024) throw Error('File quá lớn (tối đa 15MB)');
+    const obj = JSON.parse(await file.text());
+    if (obj?.format !== 'lexiflow-backup' || obj.version !== 1 || !Array.isArray(obj.words) || !Array.isArray(obj.logs)) {
+      throw Error('Không đúng định dạng bản sao lưu ĐK.Language');
+    }
+    if (obj.words.length > 100000 || obj.logs.length > 1000000) throw Error('Dữ liệu vượt giới hạn');
+    const validWord = word => word && typeof word.id==='string' && word.id &&
+      typeof word.en==='string' && word.en.trim() && typeof word.vi==='string' && word.vi.trim() &&
+      typeof word.category==='string' && Number.isFinite(word.reviews) && Number.isFinite(word.due);
+    const validLog = log => log && typeof log.id==='string' && log.id &&
+      typeof log.wordId==='string' && Number.isFinite(log.time) && typeof log.correct==='boolean';
+    if (!obj.words.every(validWord) || !obj.logs.every(validLog) ||
+        new Set(obj.words.map(word=>word.id)).size !== obj.words.length ||
+        new Set(obj.logs.map(log=>log.id)).size !== obj.logs.length) {
+      throw Error('Cấu trúc dữ liệu không hợp lệ');
+    }
+
+    let message;
+    if (replace) {
+      if (!confirm(`Thay thế kho hiện tại bằng ${obj.words.length} từ và ${obj.logs.length} lượt học? Hãy xuất sao lưu trước nếu cần.`)) return;
+      await replaceData(obj.words,obj.logs,backupSettings(obj));
+      message = `Đã khôi phục ${obj.words.length} từ`;
+    } else {
+      const result = await mergeData(obj);
+      const matched = obj.words.length - result.addedWords;
+      message = `Đã thêm ${result.addedWords} từ và ${result.addedLogs.length} lượt học. Đã đối chiếu ${matched} mục trùng.`;
+    }
+    lastPronunciation = undefined;
+    quiz = null;
+    await refresh();
+    render();
+    toast(message);
+  } catch (err) {
+    toast('Không thể nhập: '+err.message);
+  } finally {
+    input.value = '';
+    input.disabled = false;
+  }
+}
 async function init(){try{db=await openDB();await refresh();bindSpeech();$('#date-label').textContent=new Intl.DateTimeFormat('vi-VN',{weekday:'long',day:'numeric',month:'long',year:'numeric'}).format(new Date());document.querySelectorAll('[data-page]').forEach(el=>el.onclick=()=>setPage(el.dataset.page));window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();beforeInstall=e;$('#install-btn').hidden=false});$('#install-btn').onclick=async()=>{if(beforeInstall){await beforeInstall.prompt();beforeInstall=null;$('#install-btn').hidden=true}};if('serviceWorker'in navigator&&location.protocol.startsWith('http'))navigator.serviceWorker.register('./sw.js').then(()=>navigator.serviceWorker.ready).then(()=>{$('#offline-status').lastChild.textContent=' Sẵn sàng học offline'}).catch(err=>console.warn('SW:',err));setPage('home')}catch(e){console.error(e);content.innerHTML=`<div class="panel empty"><h2>Không mở được dữ liệu offline</h2><p>Vui lòng mở ứng dụng qua HTTPS hoặc localhost và bật quyền lưu trữ của trình duyệt.</p><p class="muted small-text">${escapeHTML(e.message)}</p></div>`}}init();

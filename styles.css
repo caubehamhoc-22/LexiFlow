@@ -18,3 +18,5 @@
 @media(max-width:700px){.speech-btn{min-height:44px}.word-item{align-items:flex-start}}
 
 .speech-rate{min-width:65px;font-size:16px}.ipa-output{flex-basis:100%;font-size:14px;color:#c4d4ff;overflow-wrap:anywhere}
+
+.study-topic{display:flex;align-items:center;gap:8px;flex:1 1 100%;font-size:14px}.study-topic>span{flex-shrink:0}.study-topic .select{width:auto;min-width:0;max-width:100%;font-size:16px}
