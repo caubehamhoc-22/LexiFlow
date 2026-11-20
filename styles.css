@@ -6,3 +6,13 @@
 .word-item strong,.word-item p,.quiz-card .word,.answer{overflow-wrap:anywhere}
 .mobile-nav button{min-height:44px}
 @media(max-width:700px){.input,.textarea,.select{font-size:16px}.main{padding-bottom:calc(100px + env(safe-area-inset-bottom))}}
+
+.study-modes,.speech-actions{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 14px}
+.study-modes button[aria-pressed=true]{background:#4a65bc;color:#fff}
+.quiz-card .speech-actions{justify-content:center}
+.speech-actions{margin:7px 0 10px}
+.speech-btn{color:#dce8ff;background:#213656;border:1px solid #3b547b;border-radius:9px;padding:5px 9px;font-size:12px;min-height:36px}
+.rating-row button{display:grid;gap:3px}
+.rating-row small{font-size:10px;font-weight:500}
+.quiz-card .hint{margin:12px 0}
+@media(max-width:700px){.speech-btn{min-height:44px}.word-item{align-items:flex-start}}

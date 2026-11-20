@@ -1,8 +1,8 @@
 {
   "id": "./",
-  "name": "LexiFlow - Học từ vựng",
-  "short_name": "LexiFlow",
-  "description": "Ôn từ vựng thông minh, offline, học bằng câu hỏi 4 đáp án.",
+  "name": "ĐK.Language — Học từ vựng",
+  "short_name": "ĐK.Language",
+  "description": "Học từ vựng với phát âm Anh–Mỹ, tự nhớ và lịch ôn ngắt quãng.",
   "lang": "vi",
   "start_url": "./",
   "scope": "./",
