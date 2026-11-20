@@ -5,7 +5,7 @@
 ## Chức năng
 - Thêm/sửa/xóa từ và nhập hàng loạt qua `từ; nghĩa`, `từ | nghĩa`, `từ - nghĩa` hoặc tab. Tối thiểu **4 từ và 4 nghĩa khác nhau** để tạo đề.
 - Tự nhớ trước khi lật đáp án hoặc làm trắc nghiệm 4 đáp án. Chọn luyện Anh → Việt, Việt → Anh hoặc luân phiên hai chiều.
-- Nghe phát âm Anh–Mỹ ở tốc độ 1× và 0,75× trong kho từ và khi luyện. Nghe offline cần giọng English (United States) cục bộ mà trình duyệt có thể sử dụng.
+- Nghe phát âm Anh–Mỹ với tốc độ 0,5×–1,5× trong kho từ và khi luyện. Bấm Nghe để hiện IPA. Cụm từ ngoài từ điển có thể hiện IPA của từng từ; bạn có thể nhập phiên âm riêng khi sửa từ. Nghe offline cần giọng English (United States) cục bộ mà trình duyệt có thể sử dụng.
 - Ôn từ đến hạn trước từ mới. Mức Quên đưa từ trở lại sau 2 phút. Mức Khó trong giai đoạn học lại lên lịch sau 10 phút. Mỗi nút hiển thị thời gian ôn tiếp theo. Luyện thêm không dời lịch chính.
 - Tổng quan, tỷ lệ đúng, phân loại ghi nhớ, biểu đồ 7 ngày, lịch ôn.
 - IndexedDB để lưu offline và sao lưu/khôi phục file JSON (chỉ đồng bộ giữa thiết bị bằng sao lưu thủ công).
@@ -51,6 +51,10 @@ Mở `http://localhost:8080/`. **Không mở bằng `file://`** vì IndexedDB/PW
 - Nhập hàng loạt yêu cầu **đã có nghĩa tiếng Việt**; app offline không tự dịch từ chưa có nghĩa.
 - Số lượt ôn trong ngày phụ thuộc ngày tháng trên máy; đổi múi giờ có thể làm thay đổi thống kê ngày.
 - Phân loại chất lượng ghi nhớ là ước lượng, không phải thước đo khoa học được xác nhận độc lập.
+
+## Nguồn IPA
+
+IPA Anh–Mỹ lấy từ [ipa-dict](https://github.com/open-dict-data/ipa-dict), dựa trên CMUdict. Ứng dụng tải trước từ điển để tra offline. Xem [giấy phép và ghi nguồn](IPA-NOTICES.txt).
 
 ## Cơ sở phương pháp
 

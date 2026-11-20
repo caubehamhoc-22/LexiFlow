@@ -16,3 +16,5 @@
 .rating-row small{font-size:10px;font-weight:500}
 .quiz-card .hint{margin:12px 0}
 @media(max-width:700px){.speech-btn{min-height:44px}.word-item{align-items:flex-start}}
+
+.speech-rate{min-width:65px;font-size:16px}.ipa-output{flex-basis:100%;font-size:14px;color:#c4d4ff;overflow-wrap:anywhere}

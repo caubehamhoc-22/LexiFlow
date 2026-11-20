@@ -24,7 +24,7 @@ function replaceData(newWords, newLogs, newSettings) {
     }
   });
 }
-async function refresh(){[words,logs]=await Promise.all([getAll('words'),getAll('logs')]);const s=await getAll('settings');settings={direction:'mixed',dailyGoal:20,...Object.fromEntries(s.map(x=>[x.key,x.value]))}}function wordObject(en,vi,category='Chung'){return {id:uuid(),en:en.trim(),vi:vi.trim(),category:category.trim()||'Chung',createdAt:Date.now(),reviews:0,successes:0,lapses:0,stability:0,difficulty:5,due:0,lastReviewed:0}}
+async function refresh(){[words,logs]=await Promise.all([getAll('words'),getAll('logs')]);const s=await getAll('settings');settings={direction:'mixed',dailyGoal:20,speechRate:1,...Object.fromEntries(s.map(x=>[x.key,x.value]))}}function wordObject(en,vi,category='Chung'){return {id:uuid(),en:en.trim(),vi:vi.trim(),category:category.trim()||'Chung',createdAt:Date.now(),reviews:0,successes:0,lapses:0,stability:0,difficulty:5,due:0,lastReviewed:0}}
 function progressStreak(){const dates=new Set(logs.map(x=>localDate(x.time))),today=dayOffset(0),yesterday=dayOffset(-1);if(!dates.has(today)&&!dates.has(yesterday))return 0;let i=dates.has(today)?0:-1,days=0;while(dates.has(dayOffset(i))){days++;i--}return days}
 function stats(){let due=words.filter(w=>eligible(w)).length,reviewed=words.filter(w=>w.reviews),answers=logs.filter(l=>l.mode!=='recall'), recalled=logs.filter(l=>l.mode==='recall'), accuracy=answers.length?answers.filter(l=>l.correct).length/answers.length:0,ret=reviewed.length?reviewed.reduce((sum,w)=>sum+retrievability(w),0)/reviewed.length:0;return {due,reviewed:reviewed.length,accuracy,ret,answered:answers.length,recallCount:recalled.length,recallRate:recalled.length?recalled.filter(l=>l.correct).length/recalled.length:0,learnedToday:new Set(logs.filter(l=>localDate(l.time)===dayOffset(0)).map(l=>l.wordId)).size}}
 const icons={home:'◫',study:'⚡',words:'▤',stats:'◷',settings:'⚙'};function setPage(p){page=p;document.querySelectorAll('[data-page]').forEach(b=>b.classList.toggle('active',b.dataset.page===p));$('#page-title').textContent=({home:'Tổng quan',study:'Luyện tập',words:'Kho từ vựng',stats:'Thống kê ghi nhớ',settings:'Cài đặt'})[p];$('#streak-badge').textContent=`🔥 ${progressStreak()} ngày`;render();window.scrollTo({top:0,behavior:'instant'})}function render(){if(page==='home')home();else if(page==='study')study();else if(page==='words')wordPage();else if(page==='stats')statsPage();else settingsPage()}
@@ -48,13 +48,80 @@ function buildQuestion(word, reverse) {
   const options = randomize([word[key], ...randomize([...byAnswer.values()]).slice(0, 3)]);
   return {word, reverse, options, correct: options.indexOf(word[key]), selected: null, done: false};
 }
+const speechRates = ['0.5','0.65','0.75','0.85','1','1.15','1.25','1.5'];
+let ipaDictionary;
+let lastPronunciation;
+
+function speechRateLabel(rate) {
+  return rate.replace('.', ',') + '×';
+}
+
 function speakerButtons(word) {
+  const savedRate = String(settings.speechRate ?? 1);
+  const shown = lastPronunciation?.id === word.id && lastPronunciation.value;
   return `<span class="speech-actions">
-    <button type="button" class="speech-btn" data-speak="${escapeHTML(word.id)}" data-rate="1" aria-label="Nghe phát âm Anh–Mỹ">🔊 Nghe</button>
-    <button type="button" class="speech-btn" data-speak="${escapeHTML(word.id)}" data-rate="0.75" aria-label="Nghe phát âm chậm">0,75×</button>
+    <button type="button" class="speech-btn" data-speak="${escapeHTML(word.id)}" aria-label="Nghe phát âm Anh–Mỹ">🔊 Nghe</button>
+    <select class="speech-btn speech-rate" data-speech-rate aria-label="Tốc độ phát âm">
+      ${speechRates.map(rate => `<option value="${rate}" ${rate===savedRate?'selected':''}>${speechRateLabel(rate)}</option>`).join('')}
+    </select>
+    <span class="ipa-output" data-ipa-output role="status"${shown?'':' hidden'}>${shown?escapeHTML(shown):''}</span>
   </span>`;
 }
 
+function loadIpaDictionary() {
+  ipaDictionary ??= fetch('./ipa-en-us.txt').then(async response => {
+    if (!response.ok) throw Error('Không tải được từ điển IPA');
+    const entries = new Map();
+    for (const line of (await response.text()).split(/\r?\n/)) {
+      const tab = line.indexOf('\t');
+      if (tab > 0) entries.set(line.slice(0, tab).toLowerCase(), line.slice(tab + 1).trim());
+    }
+    if (!entries.size) throw Error('Từ điển IPA trống');
+    return entries;
+  }).catch(error => {
+    ipaDictionary = undefined;
+    throw error;
+  });
+  return ipaDictionary;
+}
+
+async function lookupIpa(word) {
+  if (typeof word.ipa === 'string' && word.ipa.trim()) {
+    const custom = word.ipa.trim();
+    return custom.startsWith('/') ? custom : '/' + custom + '/';
+  }
+  const entries = await loadIpaDictionary();
+  const key = word.en.normalize('NFC').toLowerCase().trim().replace(/[’‘]/g, "'").replace(/\s+/g, ' ');
+  if (entries.has(key)) return entries.get(key);
+  const tokens = key.match(/[\p{L}\p{N}]+(?:'[\p{L}]+)*/gu) || [];
+  if (!tokens.length) return '';
+  const parts = tokens.map(token => entries.get(token)?.split(',')[0]);
+  if (!parts.every(Boolean)) return '';
+  return tokens.length === 1 ? parts[0] : parts.join(' ') + ' (từng từ)';
+}
+
+async function showPronunciation(word, output) {
+  output.hidden = false;
+  output.textContent = 'Đang tra IPA…';
+  const request = {id:word.id, value:''};
+  lastPronunciation = request;
+  try {
+    const ipa = await lookupIpa(word);
+    request.value = ipa ? 'IPA · ' + ipa : 'Chưa có IPA. Bạn có thể bổ sung trong Kho từ vựng.';
+  } catch {
+    request.value = 'Chưa tải được từ điển IPA. Hãy thử lại khi có mạng.';
+    if (lastPronunciation === request) lastPronunciation = undefined;
+  }
+  output.textContent = request.value;
+  if (lastPronunciation === request) {
+    for (const button of content.querySelectorAll('button[data-speak]')) {
+      if (button.dataset.speak !== word.id) continue;
+      const current = button.parentElement.querySelector('[data-ipa-output]');
+      current.hidden = false;
+      current.textContent = request.value;
+    }
+  }
+}
 function speakEnglish(text, rate) {
   const synth = globalThis.speechSynthesis;
   if (!synth || !globalThis.SpeechSynthesisUtterance) {
@@ -83,11 +150,26 @@ function speakEnglish(text, rate) {
 
 function bindSpeech() {
   globalThis.speechSynthesis?.getVoices();
+  content.addEventListener('change', async event => {
+    const select = event.target.closest('select[data-speech-rate]');
+    if (!select || !speechRates.includes(select.value)) return;
+    const rate = select.value;
+    settings.speechRate = Number(rate);
+    content.querySelectorAll('select[data-speech-rate]').forEach(control => {control.value = rate});
+    try {
+      await put('settings', {key:'speechRate',value:Number(rate)});
+    } catch {
+      toast('Chưa lưu được tốc độ cho lần mở tiếp theo.');
+    }
+  });
   content.addEventListener('click', event => {
     const button = event.target.closest('button[data-speak]');
     if (!button) return;
     const word = words.find(entry => entry.id === button.dataset.speak);
-    if (word) speakEnglish(word.en, Number(button.dataset.rate));
+    if (!word) return;
+    const output = button.parentElement.querySelector('[data-ipa-output]');
+    void showPronunciation(word, output);
+    speakEnglish(word.en, settings.speechRate ?? 1);
   });
 }
 
@@ -156,7 +238,7 @@ function study() {
     ${recall?'':`<div class="answers">${q.options.map((option,i)=>`<button class="answer ${q.done?(i===q.correct?'correct':i===q.selected?'wrong':''):''}" data-answer="${i}" ${q.done?'disabled':''}><span class="letter">${'ABCD'[i]}</span><span>${escapeHTML(option)}</span></button>`).join('')}</div>`}
     ${q.done?`<div class="feedback ${wrongChoice?'bad':'good'}"><strong>${recall?'Đáp án':wrongChoice?'✕ Chưa đúng':'✓ Chính xác!'}</strong>
       <p class="muted" style="margin:9px 0">${escapeHTML(q.word.en)} — ${escapeHTML(q.word.vi)}</p>
-      ${speakerButtons(q.word)}
+      ${q.reverse?speakerButtons(q.word):''}
       <p class="muted small-text">Bạn đã tự nhớ được ở mức nào?</p>
       <div class="rating-row">${grades.map(g=>`<button class="btn small ${g.id===1?'danger':'secondary'}" data-grade="${g.id}" ${q.saving||(wrongChoice&&g.id!==1)?'disabled':''} title="${g.hint}">${g.label}<small>${reviewHint(q.word,g.id)}</small></button>`).join('')}</div></div>`:''}</div>`;
 
@@ -229,13 +311,13 @@ function nextQuestion(practice = false, previousId) {
   }
 }
 function wordPage(){const cats=[...new Set(words.map(w=>w.category))].sort();let filtered=words.filter(w=>(w.en+' '+w.vi+' '+w.category).toLowerCase().includes(filter.toLowerCase())&&(categoryFilter==='all'||w.category===categoryFilter)).sort((a,b)=>a.en.localeCompare(b.en));content.innerHTML=`<div class="toolbar"><input class="input" id="search-words" placeholder="🔎 Tìm từ hoặc nghĩa..." value="${escapeHTML(filter)}"><select class="select" id="cat-filter"><option value="all">Tất cả chủ đề</option>${cats.map(c=>`<option value="${escapeHTML(c)}" ${categoryFilter===c?'selected':''}>${escapeHTML(c)}</option>`).join('')}</select><button class="btn" id="open-add">+ Thêm từ</button><button class="btn secondary" id="open-bulk">⇧ Nhập hàng loạt</button></div><div class="space-between" style="margin-bottom:16px"><span class="muted small-text">${filtered.length} / ${words.length} từ</span><span class="muted small-text">Dữ liệu lưu trên thiết bị này</span></div><div class="word-list">${filtered.length?filtered.map(w=>`<div class="word-item"><div style="min-width:0"><strong>${escapeHTML(w.en)}</strong> <span class="pill">${escapeHTML(w.category)}</span><p>${escapeHTML(w.vi)} · ${w.reviews?`Đã ôn ${w.reviews} lần`:'Chưa học'}</p>${speakerButtons(w)}</div><div class="actions"><button data-edit="${escapeHTML(w.id)}" title="Chỉnh sửa">✎</button><button data-delete="${escapeHTML(w.id)}" title="Xóa">✕</button></div></div>`).join(''):'<div class="panel empty">Chưa có từ vựng phù hợp. Hãy thêm từ mới.</div>'}</div>`;$('#search-words').oninput=e=>{filter=e.target.value;wordPage();const input=$('#search-words');input.focus();input.setSelectionRange(filter.length,filter.length)};$('#cat-filter').onchange=e=>{categoryFilter=e.target.value;wordPage()};$('#open-add').onclick=()=>wordModal();$('#open-bulk').onclick=bulkModal;document.querySelectorAll('[data-edit]').forEach(b=>b.onclick=()=>wordModal(words.find(w=>w.id===b.dataset.edit)));document.querySelectorAll('[data-delete]').forEach(b=>b.onclick=()=>deleteWord(b.dataset.delete))}
-function modal(html){const el=$('#modal');el.innerHTML=`<div class="modal" role="dialog" aria-modal="true">${html}</div>`;el.hidden=false;el.onclick=e=>{if(e.target===el)closeModal()};document.querySelectorAll('[data-close]').forEach(b=>b.onclick=closeModal)}function closeModal(){$('#modal').hidden=true;$('#modal').innerHTML=''}function wordModal(w=null){modal(`<div class="space-between"><h2>${w?'Chỉnh sửa':'Thêm'} từ vựng</h2><button class="icon-button" data-close>✕</button></div><form id="word-form"><div class="field"><label for="en">Từ tiếng Anh</label><input id="en" class="input" maxlength="120" required value="${escapeHTML(w?.en||'')}" placeholder="e.g. accomplish"></div><div class="field"><label for="vi">Nghĩa tiếng Việt</label><input id="vi" class="input" maxlength="220" required value="${escapeHTML(w?.vi||'')}" placeholder="e.g. hoàn thành"></div><div class="field"><label for="category">Chủ đề</label><input id="category" class="input" maxlength="70" value="${escapeHTML(w?.category||'Chung')}"></div><button class="btn full" type="submit">${w?'Lưu thay đổi':'Thêm từ vựng'}</button></form>`);$('#word-form').onsubmit=async e=>{e.preventDefault();let en=$('#en').value.trim(),vi=$('#vi').value.trim(),category=$('#category').value.trim()||'Chung';if(!en||!vi)return;if(words.some(x=>x.id!==w?.id&&x.en.toLowerCase()===en.toLowerCase())){toast('Từ tiếng Anh này đã tồn tại');return}const changed=w&&(w.en!==en||w.vi!==vi);await put('words',w?{...w,en,vi,category,...(changed?{reviews:0,successes:0,lapses:0,stability:0,difficulty:5,due:0,lastReviewed:0,lastGrade:0,lastDirection:null,spacedSuccesses:0,learnAgain:false}:{})}:wordObject(en,vi,category));quiz=null;await refresh();closeModal();render();toast(w?'Đã cập nhật từ':'Đã thêm từ vựng')}}
+function modal(html){const el=$('#modal');el.innerHTML=`<div class="modal" role="dialog" aria-modal="true">${html}</div>`;el.hidden=false;el.onclick=e=>{if(e.target===el)closeModal()};document.querySelectorAll('[data-close]').forEach(b=>b.onclick=closeModal)}function closeModal(){$('#modal').hidden=true;$('#modal').innerHTML=''}function wordModal(w=null){modal(`<div class="space-between"><h2>${w?'Chỉnh sửa':'Thêm'} từ vựng</h2><button class="icon-button" data-close>✕</button></div><form id="word-form"><div class="field"><label for="en">Từ tiếng Anh</label><input id="en" class="input" maxlength="120" required value="${escapeHTML(w?.en||'')}" placeholder="e.g. accomplish"></div><div class="field"><label for="vi">Nghĩa tiếng Việt</label><input id="vi" class="input" maxlength="220" required value="${escapeHTML(w?.vi||'')}" placeholder="e.g. hoàn thành"></div><div class="field"><label for="ipa">IPA (tùy chọn)</label><input id="ipa" class="input" maxlength="160" value="${escapeHTML(w?.ipa||'')}" placeholder="/əˈkɑmplɪʃ/"></div><div class="field"><label for="category">Chủ đề</label><input id="category" class="input" maxlength="70" value="${escapeHTML(w?.category||'Chung')}"></div><button class="btn full" type="submit">${w?'Lưu thay đổi':'Thêm từ vựng'}</button></form>`);$('#word-form').onsubmit=async e=>{e.preventDefault();let en=$('#en').value.trim(),vi=$('#vi').value.trim(),category=$('#category').value.trim()||'Chung';let ipa=$('#ipa').value.trim();if(!en||!vi)return;if(words.some(x=>x.id!==w?.id&&x.en.toLowerCase()===en.toLowerCase())){toast('Từ tiếng Anh này đã tồn tại');return}const changed=w&&(w.en!==en||w.vi!==vi);await put('words',w?{...w,en,vi,category,ipa,...(changed?{reviews:0,successes:0,lapses:0,stability:0,difficulty:5,due:0,lastReviewed:0,lastGrade:0,lastDirection:null,spacedSuccesses:0,learnAgain:false}:{})}:{...wordObject(en,vi,category),ipa});lastPronunciation=undefined;quiz=null;await refresh();closeModal();render();toast(w?'Đã cập nhật từ':'Đã thêm từ vựng')}}
 async function deleteWord(id){const w=words.find(w=>w.id===id);if(!w||!confirm(`Xóa từ “${w.en}”?`))return;await remove('words',id);quiz=null;await refresh();render();toast('Đã xóa từ')}
 function parseBulk(text,category){const rows=[],errors=[];for(const [i,line] of text.split(/\r?\n/).entries()){if(!line.trim())continue;const parts=line.split(/\t|\s*[;|]\s*|\s+[-–—]\s+/);if(parts.length<2||!parts[0].trim()||!parts.slice(1).join(' ').trim()){errors.push(i+1);continue}rows.push(wordObject(parts[0],parts.slice(1).join(' - '),category))}return {rows,errors}}
 function bulkModal(){modal(`<div class="space-between"><h2>Nhập từ vựng hàng loạt</h2><button class="icon-button" data-close>✕</button></div><p class="muted small-text">Mỗi dòng một từ, dùng dấu <b>;</b>, dấu <b>|</b>, tab hoặc <b> - </b> giữa từ và nghĩa.</p><form id="bulk-form"><div class="field"><label for="bulk-cat">Chủ đề</label><input id="bulk-cat" class="input" placeholder="Ví dụ: IELTS" value="Chung"></div><div class="field"><label for="bulk-text">Danh sách từ vựng</label><textarea id="bulk-text" class="textarea" required placeholder="maintain; duy trì&#10;achieve; đạt được&#10;improve; cải thiện&#10;benefit; lợi ích"></textarea></div><button class="btn full" type="submit">Nhập danh sách</button></form>`);$('#bulk-form').onsubmit=async e=>{e.preventDefault();const {rows,errors}=parseBulk($('#bulk-text').value,$('#bulk-cat').value.trim()||'Chung');const present=new Set(words.map(w=>w.en.toLowerCase()));let added=0,duplicate=0;for(const w of rows){const key=w.en.toLowerCase();if(present.has(key)){duplicate++;continue}await put('words',w);present.add(key);added++}quiz=null;await refresh();closeModal();render();toast(`Đã nhập ${added} từ; trùng ${duplicate}; sai định dạng ${errors.length}`)}}
 function chartSVG(points){const w=650,h=220,pad=30,ys=points.map(p=>p.value),max=100;const coords=points.map((p,i)=>[pad+i*(w-2*pad)/Math.max(1,points.length-1),h-pad-p.value/max*(h-2*pad)]);return `<svg class="chart" viewBox="0 0 ${w} ${h}" role="img" aria-label="Biểu đồ tỷ lệ trả lời đúng 7 ngày"><line x1="${pad}" y1="${h-pad}" x2="${w-pad}" y2="${h-pad}" class="chart-grid"/><line x1="${pad}" y1="${pad}" x2="${w-pad}" y2="${pad}" class="chart-grid"/><line x1="${pad}" y1="${(h)/2}" x2="${w-pad}" y2="${h/2}" class="chart-grid"/><text x="0" y="${pad+4}" class="chart-label">100%</text><text x="0" y="${h-pad+4}" class="chart-label">0%</text>${coords.length>1?`<polyline class="chart-line" points="${coords.map(p=>p.join(',')).join(' ')}"/>`:''}${coords.map(([x,y],i)=>`<circle cx="${x}" cy="${y}" r="4" class="chart-dot"/><text x="${x}" y="${h-7}" text-anchor="middle" class="chart-label">${points[i].label}</text>`).join('')}</svg>`}
 function statsPage(){const s=stats(),counts={strong:0,medium:0,weak:0,new:0};words.forEach(w=>counts[quality(w)]++);const points=Array.from({length:7},(_,i)=>{const day=dayOffset(i-6),ls=logs.filter(l=>l.mode!=='recall'&&localDate(l.time)===day);return {label:new Date(fromDay(day)).toLocaleDateString('vi-VN',{weekday:'short'}),value:ls.length?Math.round(ls.filter(l=>l.correct).length/ls.length*100):0,n:ls.length}});const upcoming=Array.from({length:7},(_,i)=>{const day=dayOffset(i),n=words.filter(w=>w.reviews&&localDate(w.due)===day).length;return {day,n}});content.innerHTML=`<div class="grid"><div class="panel"><div class="stat-caption">TỪ ĐÃ HỌC</div><div class="stat-value">${s.reviewed}</div><div class="stat-foot">trên ${words.length} từ</div></div><div class="panel"><div class="stat-caption">TRẮC NGHIỆM ĐÚNG</div><div class="stat-value">${pct(s.accuracy)}</div><div class="stat-foot">${s.answered} câu trắc nghiệm</div></div><div class="panel"><div class="stat-caption">KHẢ NĂNG NHỚ DỰ ĐOÁN</div><div class="stat-value">${pct(s.ret)}</div><div class="stat-foot">ước tính từ mô hình DSR</div></div></div><div class="grid two" style="margin-top:18px"><div class="panel"><h3>📈 Tỷ lệ trả lời đúng · 7 ngày</h3><p class="chart-caption">Ngày không luyện tập được hiển thị ở mức 0%, không tính vào tỷ lệ tổng.</p>${chartSVG(points)}</div><div class="panel"><h3>🧠 Phân loại mức độ ghi nhớ</h3><p class="muted small-text">${s.recallCount ? `Tự nhớ đúng ${pct(s.recallRate)} qua ${s.recallCount} lượt.` : 'Kết quả Tự nhớ sẽ hiện sau lượt đầu tiên.'}</p><div class="bar-list" style="margin-top:25px">${[['strong','Ghi nhớ tốt','#54d6ad'],['medium','Đang củng cố','#83a3ff'],['weak','Dễ quên','#fa9f70'],['new','Chưa học','#7686a3']].map(([k,t,c])=>`<div class="bar-row"><div><span>${t}</span><strong>${counts[k]}</strong></div><div class="bar-fill"><span style="width:${words.length?100*counts[k]/words.length:0}%;background:${c}"></span></div></div>`).join('')}</div></div></div><div class="section-head"><h2>📅 Lịch ôn 7 ngày tới</h2></div><div class="panel"><div class="schedule-list">${upcoming.map(x=>`<div class="schedule-item"><span class="muted small-text">${formatDate(fromDay(x.day))}</span><strong>${x.n} từ</strong></div>`).join('')}</div><p class="footer-note">Từ quá hạn được tính trong số “Cần ôn hôm nay” ở trang tổng quan.</p></div><p class="footer-note">Chỉ số “khả năng nhớ” là xác suất ước tính theo mô hình, không phải kết quả kiểm tra trí nhớ lâm sàng. Mô hình cần nhiều lượt ôn để phản ánh tốt hơn khả năng ghi nhớ.</p>`}
-function settingsPage(){content.innerHTML=`<div class="grid two"><div class="panel"><h3>⚙ Tùy chọn học tập</h3><div class="field"><label for="direction">Chiều câu hỏi</label><select class="select" id="direction"><option value="mixed" ${settings.direction==='mixed'?'selected':''}>Kết hợp hai chiều</option><option value="en-vi" ${settings.direction==='en-vi'?'selected':''}>Anh → Việt</option><option value="vi-en" ${settings.direction==='vi-en'?'selected':''}>Việt → Anh</option></select></div><div class="field"><label for="daily-goal">Mục tiêu từ mỗi ngày</label><input type="number" id="daily-goal" min="1" max="500" class="input" value="${settings.dailyGoal}"></div><button class="btn" id="save-settings">Lưu tùy chọn</button></div><div class="panel"><h3>🛡 Sao lưu và khôi phục</h3><p class="muted small-text">Dữ liệu chỉ lưu trên thiết bị hiện tại. Hãy xuất bản sao lưu định kỳ để tránh mất dữ liệu nếu xóa trình duyệt hoặc đổi máy.</p><div class="split"><button class="btn secondary" id="export-data">⬇ Xuất JSON</button><button class="btn secondary" id="import-data">⬆ Nhập JSON</button><input id="file-input" type="file" accept="application/json,.json" hidden></div></div><div class="panel"><h3>📱 Cài trên điện thoại</h3><p class="muted small-text">iPhone: mở bằng Safari → Chia sẻ → Thêm vào Màn hình chính. Android: Chrome → Cài đặt ứng dụng / Thêm vào màn hình chính. Cần HTTPS để cài đặt và chạy offline qua Service Worker.</p><p class="footer-note">Khi cập nhật mã nguồn cùng địa chỉ web, dữ liệu IndexedDB được giữ lại nếu không xóa dữ liệu trang web.</p></div><div class="panel"><h3>ℹ Thuật toán</h3><p class="muted small-text">ĐK.Language ưu tiên từ đến hạn. Chế độ Tự nhớ để bạn nghĩ đáp án trước khi lật thẻ. Mức Quên đưa từ trở lại sau 2 phút, còn mức Khó với từ đang học lại lên lịch sau 10 phút.</p><p class="footer-note">Nghe giọng Anh–Mỹ bằng nút Nghe hoặc 0,75×. Để nghe offline, thiết bị cần có giọng English (United States) dùng được ngoại tuyến.</p><button class="btn danger small" id="reset-data">Xóa toàn bộ dữ liệu</button></div></div>`;$('#save-settings').onclick=async()=>{const g=Number($('#daily-goal').value);if(!Number.isInteger(g)||g<1||g>500){toast('Mục tiêu phải từ 1 đến 500');return}const direction=$('#direction').value;await write('settings',tx=>{const store=tx.objectStore('settings');store.put({key:'dailyGoal',value:g});store.put({key:'direction',value:direction})});settings={...settings,dailyGoal:g,direction};quiz=null;toast('Đã lưu thiết lập')};$('#export-data').onclick=exportData;$('#import-data').onclick=()=>$('#file-input').click();$('#file-input').onchange=importData;$('#reset-data').onclick=async()=>{if(!confirm('Bạn chắc chắn muốn XÓA tất cả từ vựng và lịch sử? Hành động không thể hoàn tác.'))return;if(!confirm('Xác nhận lần cuối: xóa dữ liệu vĩnh viễn?'))return;await replaceData([], [], Object.entries(settings).map(([key,value])=>({key,value})));quiz=null;await refresh();render();toast('Đã xóa toàn bộ dữ liệu')}}
+function settingsPage(){content.innerHTML=`<div class="grid two"><div class="panel"><h3>⚙ Tùy chọn học tập</h3><div class="field"><label for="direction">Chiều câu hỏi</label><select class="select" id="direction"><option value="mixed" ${settings.direction==='mixed'?'selected':''}>Kết hợp hai chiều</option><option value="en-vi" ${settings.direction==='en-vi'?'selected':''}>Anh → Việt</option><option value="vi-en" ${settings.direction==='vi-en'?'selected':''}>Việt → Anh</option></select></div><div class="field"><label for="daily-goal">Mục tiêu từ mỗi ngày</label><input type="number" id="daily-goal" min="1" max="500" class="input" value="${settings.dailyGoal}"></div><button class="btn" id="save-settings">Lưu tùy chọn</button></div><div class="panel"><h3>🛡 Sao lưu và khôi phục</h3><p class="muted small-text">Dữ liệu chỉ lưu trên thiết bị hiện tại. Hãy xuất bản sao lưu định kỳ để tránh mất dữ liệu nếu xóa trình duyệt hoặc đổi máy.</p><div class="split"><button class="btn secondary" id="export-data">⬇ Xuất JSON</button><button class="btn secondary" id="import-data">⬆ Nhập JSON</button><input id="file-input" type="file" accept="application/json,.json" hidden></div></div><div class="panel"><h3>📱 Cài trên điện thoại</h3><p class="muted small-text">iPhone: mở bằng Safari → Chia sẻ → Thêm vào Màn hình chính. Android: Chrome → Cài đặt ứng dụng / Thêm vào màn hình chính. Cần HTTPS để cài đặt và chạy offline qua Service Worker.</p><p class="footer-note">Khi cập nhật mã nguồn cùng địa chỉ web, dữ liệu IndexedDB được giữ lại nếu không xóa dữ liệu trang web.</p></div><div class="panel"><h3>ℹ Thuật toán</h3><p class="muted small-text">ĐK.Language ưu tiên từ đến hạn. Chế độ Tự nhớ để bạn nghĩ đáp án trước khi lật thẻ. Mức Quên đưa từ trở lại sau 2 phút, còn mức Khó với từ đang học lại lên lịch sau 10 phút.</p><p class="footer-note">Chọn tốc độ 0,5×–1,5×. Bấm Nghe để hiện IPA Anh–Mỹ. Để nghe offline, thiết bị cần có giọng English (United States) dùng được ngoại tuyến.</p><button class="btn danger small" id="reset-data">Xóa toàn bộ dữ liệu</button></div></div>`;$('#save-settings').onclick=async()=>{const g=Number($('#daily-goal').value);if(!Number.isInteger(g)||g<1||g>500){toast('Mục tiêu phải từ 1 đến 500');return}const direction=$('#direction').value;await write('settings',tx=>{const store=tx.objectStore('settings');store.put({key:'dailyGoal',value:g});store.put({key:'direction',value:direction})});settings={...settings,dailyGoal:g,direction};quiz=null;toast('Đã lưu thiết lập')};$('#export-data').onclick=exportData;$('#import-data').onclick=()=>$('#file-input').click();$('#file-input').onchange=importData;$('#reset-data').onclick=async()=>{if(!confirm('Bạn chắc chắn muốn XÓA tất cả từ vựng và lịch sử? Hành động không thể hoàn tác.'))return;if(!confirm('Xác nhận lần cuối: xóa dữ liệu vĩnh viễn?'))return;await replaceData([], [], Object.entries(settings).map(([key,value])=>({key,value})));quiz=null;await refresh();render();toast('Đã xóa toàn bộ dữ liệu')}}
 function exportData(){const data={format:'lexiflow-backup',version:1,exportedAt:new Date().toISOString(),words,logs,settings};const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=`dk-language-backup-${localDate()}.json`;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1500);toast('Đã xuất file sao lưu')}
 async function importData(e){const file=e.target.files?.[0];if(!file)return;try{if(file.size>15*1024*1024)throw Error('File quá lớn (tối đa 15MB)');const obj=JSON.parse(await file.text());if(obj.format!=='lexiflow-backup'||obj.version!==1||!Array.isArray(obj.words)||!Array.isArray(obj.logs))throw Error('Không đúng định dạng bản sao lưu ĐK.Language');if(obj.words.length>100000||obj.logs.length>1000000)throw Error('Dữ liệu vượt giới hạn');if(!obj.words.every(w=>typeof w.id==='string'&&typeof w.en==='string'&&typeof w.vi==='string'&&w.en&&w.vi&&typeof w.category==='string'&&Number.isFinite(w.reviews)&&Number.isFinite(w.due))||!obj.logs.every(l=>typeof l.id==='string'&&typeof l.wordId==='string'&&Number.isFinite(l.time)&&typeof l.correct==='boolean'))throw Error('Cấu trúc dữ liệu không hợp lệ');if(!confirm(`Khôi phục ${obj.words.length} từ và ${obj.logs.length} lượt học? Dữ liệu hiện tại sẽ bị thay thế. Hãy xuất sao lưu trước nếu cần.`))return;const restoredSettings = [];
   if (['mixed','en-vi','vi-en'].includes(obj.settings?.direction)) {
@@ -244,5 +326,9 @@ async function importData(e){const file=e.target.files?.[0];if(!file)return;try{
   if (Number.isInteger(obj.settings?.dailyGoal) && obj.settings.dailyGoal >= 1 && obj.settings.dailyGoal <= 500) {
     restoredSettings.push({key:'dailyGoal', value:obj.settings.dailyGoal});
   }
+  if (speechRates.includes(String(obj.settings?.speechRate))) {
+    restoredSettings.push({key:'speechRate', value:Number(obj.settings.speechRate)});
+  }
+  lastPronunciation=undefined;
   await replaceData(obj.words, obj.logs, restoredSettings);quiz=null;await refresh();render();toast(`Đã khôi phục ${words.length} từ`)}catch(err){toast('Không thể nhập: '+err.message)}finally{e.target.value=''}}
 async function init(){try{db=await openDB();await refresh();bindSpeech();$('#date-label').textContent=new Intl.DateTimeFormat('vi-VN',{weekday:'long',day:'numeric',month:'long',year:'numeric'}).format(new Date());document.querySelectorAll('[data-page]').forEach(el=>el.onclick=()=>setPage(el.dataset.page));window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();beforeInstall=e;$('#install-btn').hidden=false});$('#install-btn').onclick=async()=>{if(beforeInstall){await beforeInstall.prompt();beforeInstall=null;$('#install-btn').hidden=true}};if('serviceWorker'in navigator&&location.protocol.startsWith('http'))navigator.serviceWorker.register('./sw.js').then(()=>navigator.serviceWorker.ready).then(()=>{$('#offline-status').lastChild.textContent=' Sẵn sàng học offline'}).catch(err=>console.warn('SW:',err));setPage('home')}catch(e){console.error(e);content.innerHTML=`<div class="panel empty"><h2>Không mở được dữ liệu offline</h2><p>Vui lòng mở ứng dụng qua HTTPS hoặc localhost và bật quyền lưu trữ của trình duyệt.</p><p class="muted small-text">${escapeHTML(e.message)}</p></div>`}}init();
