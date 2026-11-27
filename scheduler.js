@@ -66,3 +66,15 @@ export function quality(word, now = Date.now()) {
 export function eligible(word, now = Date.now()) {
   return !word.reviews || word.due <= now;
 }
+
+export function scheduleAnswer(word, correct, now = Date.now()) {
+  const updated = schedule(word, correct ? 3 : 1, now);
+  const priorStreak = word.correctStreak ?? (
+    word.lastGrade >= 3 ? Math.min(2, word.spacedSuccesses ?? word.successes ?? 0) : 0
+  );
+  const correctStreak = correct ? priorStreak + Number(!word.reviews ||
+    elapsedDays(word, now) >= .75 || word.lastGrade === 1) : 0;
+  const interval = correct ? Math.max(updated.interval,
+    [1, 1, 3, 7, 14, 30, 60][Math.min(correctStreak, 6)]) : updated.interval;
+  return {...updated, correctStreak, interval, due:correct ? now + interval * DAY : updated.due};
+}

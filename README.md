@@ -6,7 +6,9 @@
 - Thêm/sửa/xóa từ và nhập hàng loạt qua `từ; nghĩa`, `từ | nghĩa`, `từ - nghĩa` hoặc tab. Tối thiểu **4 từ và 4 nghĩa khác nhau** để tạo đề.
 - Tự nhớ trước khi lật đáp án hoặc làm trắc nghiệm 4 đáp án. Trong Luyện tập, chọn một chủ đề, bốc một chủ đề, hoặc trộn tất cả chủ đề. Chọn luyện Anh → Việt, Việt → Anh hoặc luân phiên hai chiều.
 - Nghe phát âm Anh–Mỹ với tốc độ 0,5×–1,5× trong kho từ và khi luyện. Bấm Nghe để hiện IPA. Cụm từ ngoài từ điển có thể hiện IPA của từng từ; bạn có thể nhập phiên âm riêng khi sửa từ. Nghe offline cần giọng English (United States) cục bộ mà trình duyệt có thể sử dụng.
-- Ôn từ đến hạn trước từ mới. Mức Quên đưa từ trở lại sau 2 phút. Mức Khó trong giai đoạn học lại lên lịch sau 10 phút. Mỗi nút hiển thị thời gian ôn tiếp theo. Luyện thêm không dời lịch chính.
+- Trắc nghiệm tự lưu đúng/sai và cập nhật lịch ôn ngay khi chọn đáp án. Từ sai đến hạn lại sau 2 phút. Các lần đúng cách ngày giãn khoảng ôn và lượt từ mới được xen vào.
+- Ôn bài đọc tạo đoạn tiếng Anh từ kho từ theo chủ đề bằng mẫu có sẵn. Mỗi câu có bốn lựa chọn tiếng Việt. Sau khi chọn, ứng dụng hiện đáp án, bản dịch câu hỏi và gợi ý từ đoạn đọc.
+- Thống kê bảy ngày hiển thị số câu từ vựng, đọc hiểu và tỷ lệ đúng theo ngày. Mục Câu thường sai lưu câu hỏi, đáp án và số lần sai.
 - Tổng quan, tỷ lệ đúng, phân loại ghi nhớ, biểu đồ 7 ngày, lịch ôn.
 - IndexedDB để lưu offline và sao lưu/khôi phục file JSON (chỉ đồng bộ giữa thiết bị bằng sao lưu thủ công).
 - PWA cài lên màn hình chính, Service Worker hỗ trợ offline sau lần tải đầu tiên.

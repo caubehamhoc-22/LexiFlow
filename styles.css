@@ -20,3 +20,5 @@
 .speech-rate{min-width:65px;font-size:16px}.ipa-output{flex-basis:100%;font-size:14px;color:#c4d4ff;overflow-wrap:anywhere}
 
 .study-topic{display:flex;align-items:center;gap:8px;flex:1 1 100%;font-size:14px}.study-topic>span{flex-shrink:0}.study-topic .select{width:auto;min-width:0;max-width:100%;font-size:16px}
+
+.reading-topic{margin-bottom:12px}.reading-passage{margin:12px 0}.reading-passage p{line-height:1.65;overflow-wrap:anywhere}.reading-passage h3{margin-bottom:0}.review-summary{margin-bottom:16px}.review-summary details{padding:9px 0;border-bottom:1px solid #2c3b50;overflow-wrap:anywhere}.review-summary summary{cursor:pointer}.review-summary summary small{color:#b4c0d8;margin-inline-start:8px}.review-summary details p{margin:8px 0}.review-summary button{margin-top:12px}
